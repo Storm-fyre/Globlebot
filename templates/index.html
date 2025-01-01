@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Globle Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .game-container {
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 1rem;
+        }
+        .result-box {
+            margin: 1rem 0;
+            padding: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+        }
+        .error-message {
+            color: #dc3545;
+            margin-top: 0.5rem;
+        }
+        .success-message {
+            color: #198754;
+            margin-top: 0.5rem;
+        }
+        .next-guess {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin: 1rem 0;
+            padding: 1rem;
+            background-color: #e8f5e9;
+            border-radius: 4px;
+            text-align: center;
+            text-transform: uppercase;
+            color: #2e7d32;
+        }
+        .countries-list {
+            list-style-type: none;
+            padding-left: 0;
+            margin-top: 0.5rem;
+        }
+        .countries-list li {
+            padding: 0.5rem;
+            margin: 0.25rem 0;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+        .info-text {
+            color: #6c757d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container game-container">
+        <h1 class="text-center mb-4">Globle Bot</h1>
+        
+        <!-- Initial guess form -->
+        <div id="initial-guess-form">
+            <div class="mb-3">
+                <label for="firstGuess" class="form-label">Enter your first guess country:</label>
+                <input type="text" class="form-control" id="firstGuess" required>
+            </div>
+            <button class="btn btn-primary" onclick="submitFirstGuess()">Start Game</button>
+        </div>
+
+        <!-- Next guess display -->
+        <div id="next-guess" class="next-guess" style="display: none;"></div>
+
+        <!-- Feedback form (initially hidden) -->
+        <div id="feedback-form" style="display: none;">
+            <div class="mb-3">
+                <label for="distance" class="form-label">Distance (e.g., '320km' or '<10km'):</label>
+                <input type="text" class="form-control" id="distance" required>
+            </div>
+            <div class="mb-3">
+                <label for="direction" class="form-label">Direction:</label>
+                <select class="form-control" id="direction" required>
+                    <option value="">Select direction</option>
+                    <option value="N">North (N)</option>
+                    <option value="NE">Northeast (NE)</option>
+                    <option value="E">East (E)</option>
+                    <option value="SE">Southeast (SE)</option>
+                    <option value="S">South (S)</option>
+                    <option value="SW">Southwest (SW)</option>
+                    <option value="W">West (W)</option>
+                    <option value="NW">Northwest (NW)</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="submitFeedback()">Submit Feedback</button>
+        </div>
+
+        <!-- Result display -->
+        <div id="result" class="result-box" style="display: none;"></div>
+        
+        <!-- Reset button -->
+        <button class="btn btn-secondary mt-3" onclick="resetGame()" style="display: none;">Start New Game</button>
+    </div>
+
+    <script>
+        // Function to handle the submission of the first guess
+        function submitFirstGuess() {
+            const guess = document.getElementById('firstGuess').value;
+            
+            fetch('/initialize-game', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ guess: guess })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Hide initial form and show game interface
+                    document.getElementById('initial-guess-form').style.display = 'none';
+                    document.getElementById('feedback-form').style.display = 'block';
+                    document.getElementById('next-guess').style.display = 'block';
+                    // Display the initial country in uppercase
+                    document.getElementById('next-guess').innerHTML = `Try this country: <strong>${guess.toUpperCase()}</strong>`;
+                    document.querySelector('.btn-secondary').style.display = 'block';
+                } else {
+                    // Show error message
+                    document.getElementById('result').style.display = 'block';
+                    document.getElementById('result').innerHTML = `<p class="error-message">${data.message}</p>`;
+                }
+            })
+            .catch(error => {
+                // Handle any errors that occur during the request
+                document.getElementById('result').style.display = 'block';
+                document.getElementById('result').innerHTML = `<p class="error-message">Error: ${error}</p>`;
+            });
+        }
+
+        // Function to handle the submission of distance and direction feedback
+        function submitFeedback() {
+            const distance = document.getElementById('distance').value;
+            const direction = document.getElementById('direction').value;
+            
+            fetch('/make-guess', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    distance: distance,
+                    direction: direction
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.next_guess) {
+                        // Handle single country case - display in uppercase
+                        document.getElementById('next-guess').innerHTML = `Try this country: <strong>${data.next_guess.toUpperCase()}</strong>`;
+                    } else if (data.neighboring_countries) {
+                        // Handle multiple countries case (<10km) - display all in uppercase
+                        let html = `<p class="info-text">Since the distance is &lt;10km, country could be one of these:</p>`;
+                        html += '<ul class="countries-list">';
+                        data.neighboring_countries.forEach(country => {
+                            html += `<li>${country.toUpperCase()}</li>`;
+                        });
+                        html += '</ul>';
+                        document.getElementById('next-guess').innerHTML = html;
+                    }
+                    // Clear input fields for next guess
+                    document.getElementById('distance').value = '';
+                    document.getElementById('direction').value = '';
+                } else {
+                    // Show error message
+                    document.getElementById('result').innerHTML = `<p class="error-message">${data.message}</p>`;
+                    document.getElementById('result').style.display = 'block';
+                }
+            })
+            .catch(error => {
+                // Handle any errors that occur during the request
+                document.getElementById('result').style.display = 'block';
+                document.getElementById('result').innerHTML = `<p class="error-message">Error: ${error}</p>`;
+            });
+        }
+
+        // Function to reset the game state
+        function resetGame() {
+            // Reset all form elements and display states
+            document.getElementById('initial-guess-form').style.display = 'block';
+            document.getElementById('feedback-form').style.display = 'none';
+            document.getElementById('next-guess').style.display = 'none';
+            document.getElementById('result').style.display = 'none';
+            // Clear all input fields
+            document.getElementById('firstGuess').value = '';
+            document.getElementById('distance').value = '';
+            document.getElementById('direction').value = '';
+            document.querySelector('.btn-secondary').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
