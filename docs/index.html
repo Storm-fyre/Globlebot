@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Globle Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Include the Turf.js library for geospatial calculations -->
+    <script src='https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js'></script>
+    <style>
+        .game-container { max-width: 600px; margin: 2rem auto; padding: 1rem; }
+        .result-box { margin: 1rem 0; padding: 1rem; border: 1px solid #ddd; border-radius: 4px; background-color: #f8f9fa; }
+        .error-message { color: #dc3545; margin-top: 0.5rem; }
+        .next-guess { font-size: 1.2rem; font-weight: bold; margin: 1rem 0; padding: 1rem; background-color: #e8f5e9; border-radius: 4px; text-align: center; color: #2e7d32; }
+        .countries-list { list-style-type: none; padding-left: 0; margin-top: 0.5rem; }
+        .countries-list li { padding: 0.5rem; margin: 0.25rem 0; background-color: #e9ecef; border-radius: 4px; text-transform: uppercase; }
+        .info-text { color: #6c757d; font-style: italic; }
+        .loader { border: 5px solid #f3f3f3; border-radius: 50%; border-top: 5px solid #3498db; width: 40px; height: 40px; animation: spin 2s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container game-container">
+        <h1 class="text-center mb-4">Globle Bot</h1>
+
+        <div id="loader" class="loader"></div>
+        <p id="loader-text" class="text-center text-muted">Loading map data...</p>
+        
+        <!-- Initial guess form (initially hidden) -->
+        <div id="game-content" style="display: none;">
+            <div id="initial-guess-form">
+                <div class="mb-3">
+                    <label for="firstGuess" class="form-label">Enter your first guess country:</label>
+                    <input type="text" class="form-control" id="firstGuess" required>
+                </div>
+                <button class="btn btn-primary" onclick="submitFirstGuess()">Start Game</button>
+            </div>
+
+            <!-- Next guess display -->
+            <div id="next-guess" class="next-guess" style="display: none;"></div>
+
+            <!-- Feedback form (initially hidden) -->
+            <div id="feedback-form" style="display: none;">
+                <div class="mb-3">
+                    <label for="distance" class="form-label">Distance (e.g., '320km' or '<10km'):</label>
+                    <input type="text" class="form-control" id="distance" required>
+                </div>
+                <div class="mb-3">
+                    <label for="direction" class="form-label">Direction:</label>
+                    <select class="form-select" id="direction" required>
+                        <option value="">Select direction</option>
+                        <option value="N">North (N)</option>
+                        <option value="NE">Northeast (NE)</option>
+                        <option value="E">East (E)</option>
+                        <option value="SE">Southeast (SE)</option>
+                        <option value="S">South (S)</option>
+                        <option value="SW">Southwest (SW)</option>
+                        <option value="W">West (W)</option>
+                        <option value="NW">Northwest (NW)</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="submitFeedback()">Get Next Guess</button>
+            </div>
+
+            <!-- Result display -->
+            <div id="result" class="result-box" style="display: none;"></div>
+            
+            <!-- Reset button -->
+            <button class="btn btn-secondary mt-3" onclick="resetGame()" style="display: none;">Start New Game</button>
+        </div>
+    </div>
+
+    <script>
+        let worldData;
+        let currentGuessCountryFeature;
+
+        // --- DATA LOADING ---
+        window.onload = async () => {
+            try {
+                const response = await fetch('countries.geojson');
+                if (!response.ok) {
+                    throw new Error(`Could not load countries.geojson. Status: ${response.status}`);
+                }
+                worldData = await response.json();
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('loader-text').style.display = 'none';
+                document.getElementById('game-content').style.display = 'block';
+            } catch (error) {
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('loader-text').innerText = `Error loading game data. Make sure 'countries.geojson' is in the same folder. Details: ${error.message}`;
+            }
+        };
+
+        // --- CORE GEOSPATIAL LOGIC (Replaces Python backend) ---
+
+        /**
+         * Finds the GeoJSON feature for a given country name (case-insensitive).
+         * @param {string} countryName - The name of the country to find.
+         * @returns {object|null} The GeoJSON feature object or null if not found.
+         */
+        function findCountryFeature(countryName) {
+            const nameLower = countryName.trim().toLowerCase();
+            return worldData.features.find(f => f.properties.name.toLowerCase() === nameLower);
+        }
+
+        /**
+         * Calculates the distance between the centroids of two countries in kilometers.
+         * @param {object} fromFeature - The starting country's GeoJSON feature.
+         * @param {object} toFeature - The destination country's GeoJSON feature.
+         * @returns {number} The distance in kilometers.
+         */
+        function calculateDistanceKm(fromFeature, toFeature) {
+            const fromCenter = turf.centroid(fromFeature);
+            const toCenter = turf.centroid(toFeature);
+            return turf.distance(fromCenter, toCenter, { units: 'kilometers' });
+        }
+        
+        /**
+         * Calculates the cardinal direction from one country to another.
+         * @param {object} fromFeature - The starting country's GeoJSON feature.
+         * @param {object} toFeature - The destination country's GeoJSON feature.
+         * @returns {string} The cardinal direction (e.g., 'N', 'NE').
+         */
+        function calculateDirection(fromFeature, toFeature) {
+            const fromCenter = turf.centroid(fromFeature);
+            const toCenter = turf.centroid(toFeature);
+            const bearing = turf.bearing(fromCenter, toCenter);
+            
+            const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+            const index = Math.round(((bearing + 360) % 360) / 45) % 8;
+            return directions[index];
+        }
+
+        /**
+         * Finds all countries that share a border with the given country.
+         * @param {object} countryFeature - The country's GeoJSON feature.
+         * @returns {Array<object>} An array of neighboring country features.
+         */
+        function getNeighbors(countryFeature) {
+            const neighbors = [];
+            for (const otherFeature of worldData.features) {
+                if (countryFeature.properties.name === otherFeature.properties.name) continue;
+                // turf.booleanTouches is perfect for finding shared borders.
+                if (turf.booleanTouches(countryFeature.geometry, otherFeature.geometry)) {
+                    neighbors.push(otherFeature);
+                }
+            }
+            return neighbors;
+        }
+
+        /**
+         * Parses the distance string, handling '<10km' and numbers.
+         * @param {string} distanceStr - The user's distance input.
+         * @returns {number} The parsed distance, or 0 for '<10km'.
+         */
+        function parseDistance(distanceStr) {
+            const str = distanceStr.trim().toLowerCase().replace('km', '');
+            if (str === '<10') return 0;
+            const num = parseFloat(str);
+            if (isNaN(num)) throw new Error("Invalid distance format.");
+            return num;
+        }
+
+        // --- UI AND GAME FLOW FUNCTIONS ---
+
+        function displayError(message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `<p class="error-message">${message}</p>`;
+            resultDiv.style.display = 'block';
+        }
+
+        function clearError() {
+            document.getElementById('result').style.display = 'none';
+        }
+
+        function submitFirstGuess() {
+            clearError();
+            const guess = document.getElementById('firstGuess').value;
+            const country = findCountryFeature(guess);
+
+            if (country) {
+                currentGuessCountryFeature = country;
+                document.getElementById('initial-guess-form').style.display = 'none';
+                document.getElementById('feedback-form').style.display = 'block';
+                document.getElementById('next-guess').style.display = 'block';
+                document.getElementById('next-guess').innerHTML = `Try this country: <strong>${country.properties.name.toUpperCase()}</strong>`;
+                document.querySelector('.btn-secondary').style.display = 'block';
+            } else {
+                displayError('Country not found. Please check the spelling and try again.');
+            }
+        }
+
+        function submitFeedback() {
+            clearError();
+            const distanceInput = document.getElementById('distance').value;
+            const directionInput = document.getElementById('direction').value;
+
+            if (!distanceInput || !directionInput) {
+                displayError("Please enter both distance and direction.");
+                return;
+            }
+
+            try {
+                const targetDistance = parseDistance(distanceInput);
+                const targetDirection = directionInput.toUpperCase();
+                
+                // Handle neighboring countries case (<10km)
+                if (targetDistance === 0) {
+                    const neighbors = getNeighbors(currentGuessCountryFeature);
+                    const matchingNeighbors = neighbors
+                        .filter(neighbor => calculateDirection(currentGuessCountryFeature, neighbor) === targetDirection)
+                        .map(neighbor => neighbor.properties.name.toUpperCase());
+
+                    if (matchingNeighbors.length > 0) {
+                        let html = `<p class="info-text">Since the distance is <10km, the country could be one of these:</p>`;
+                        html += '<ul class="countries-list">';
+                        matchingNeighbors.forEach(name => { html += `<li>${name}</li>`; });
+                        html += '</ul>';
+                        document.getElementById('next-guess').innerHTML = html;
+                    } else {
+                        document.getElementById('next-guess').innerHTML = `<p class="info-text">No bordering countries found to the ${targetDirection}.</p>`;
+                    }
+                } else {
+                    // Handle normal distance case
+                    let bestGuess = null;
+                    let minDifference = Infinity;
+
+                    for (const feature of worldData.features) {
+                        if (feature.properties.name === currentGuessCountryFeature.properties.name) continue;
+
+                        const direction = calculateDirection(currentGuessCountryFeature, feature);
+                        if (direction === targetDirection) {
+                            // Using centroid distance as a reliable and fast approximation
+                            const distance = calculateDistanceKm(currentGuessCountryFeature, feature);
+                            const difference = Math.abs(distance - targetDistance);
+
+                            if (difference < minDifference) {
+                                minDifference = difference;
+                                bestGuess = feature;
+                            }
+                        }
+                    }
+
+                    if (bestGuess) {
+                        currentGuessCountryFeature = bestGuess;
+                        document.getElementById('next-guess').innerHTML = `Try this country: <strong>${bestGuess.properties.name.toUpperCase()}</strong>`;
+                    } else {
+                        displayError('Could not find a suitable next guess. Please check your inputs.');
+                    }
+                }
+
+                // Clear input fields for next round
+                document.getElementById('distance').value = '';
+                document.getElementById('direction').value = 'N';
+
+            } catch (error) {
+                displayError(error.message);
+            }
+        }
+
+        function resetGame() {
+            currentGuessCountryFeature = null;
+            document.getElementById('initial-guess-form').style.display = 'block';
+            document.getElementById('feedback-form').style.display = 'none';
+            document.getElementById('next-guess').style.display = 'none';
+            document.getElementById('result').style.display = 'none';
+            document.getElementById('firstGuess').value = '';
+            document.getElementById('distance').value = '';
+            document.getElementById('direction').value = '';
+            document.querySelector('.btn-secondary').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
